@@ -9,153 +9,198 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 CLAUDE_MD="$SCRIPT_DIR/CLAUDE.md"
 
+# --- Helper: ask with confirm/retry ---
+# Usage: result=$(ask "Prompt text" "default_value" "validation_regex")
+ask() {
+    local prompt="$1"
+    local default="$2"
+    local validation="$3"
+    local value
+
+    while true; do
+        if [ -n "$default" ]; then
+            read -p "$prompt [$default]: " value
+            value="${value:-$default}"
+        else
+            read -p "$prompt: " value
+        fi
+
+        # Validate if regex provided
+        if [ -n "$validation" ] && [[ ! "$value" =~ $validation ]]; then
+            echo "  Invalid input. Please try again."
+            continue
+        fi
+
+        # Confirm
+        echo -n "  -> $value  (OK? y/n/skip) "
+        read -r confirm
+        case "$confirm" in
+            n|N) continue ;;       # re-enter
+            s|skip) echo ""; return 1 ;;  # skip this field
+            *) echo "$value"; return 0 ;;  # accept (Enter or y)
+        esac
+    done
+}
+
+# --- Helper: ask secret (no echo) ---
+ask_secret() {
+    local prompt="$1"
+    local value
+
+    while true; do
+        read -sp "$prompt: " value
+        echo ""
+        echo -n "  -> (hidden)  (OK? y/n/skip) "
+        read -r confirm
+        case "$confirm" in
+            n|N) continue ;;
+            s|skip) echo ""; return 1 ;;
+            *) echo "$value"; return 0 ;;
+        esac
+    done
+}
+
+# --- Helper: yes/no ---
+ask_yn() {
+    local prompt="$1"
+    local default="${2:-N}"
+    read -p "$prompt (y/N): " answer
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
 echo ""
 echo "=========================================="
 echo "  Claude Slack Bot - Setup Wizard"
 echo "=========================================="
 echo ""
+echo "  Tip: Each input shows (OK? y/n/skip)"
+echo "    Enter or y = accept"
+echo "    n = re-enter"
+echo "    skip = skip this field"
+echo ""
 
-# Check if already configured
-if [ -f "$ENV_FILE" ] && [ -f "$CLAUDE_MD" ]; then
-    read -p "Configuration already exists. Overwrite? (y/N): " overwrite
-    if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
-        echo "Setup cancelled."
+# Check existing config
+if [ -f "$ENV_FILE" ] || [ -f "$CLAUDE_MD" ]; then
+    echo "  Existing config found:"
+    [ -f "$ENV_FILE" ] && echo "    - .env"
+    [ -f "$CLAUDE_MD" ] && echo "    - CLAUDE.md"
+    echo ""
+    if ! ask_yn "  Overwrite and start fresh?"; then
+        echo ""
+        echo "  Setup cancelled. Your existing config is untouched."
         exit 0
     fi
+    echo ""
 fi
 
-# --- Step 1: Slack Tokens ---
-echo ""
+# ========================================
+# Step 1: Slack Tokens
+# ========================================
 echo "--- Step 1/5: Slack App Tokens ---"
 echo ""
-echo "Create a Slack App at https://api.slack.com/apps"
-echo "  - Enable Socket Mode"
-echo "  - Add bot events: app_mention, message.channels, message.groups, message.im"
-echo "  - Add scopes: app_mentions:read, channels:history, chat:write, reactions:write"
+echo "  Create a Slack App at https://api.slack.com/apps"
+echo "  Enable Socket Mode, add bot events & scopes (see README)"
 echo ""
 
-read -p "Bot Token (xoxb-...): " SLACK_BOT_TOKEN
-while [[ ! "$SLACK_BOT_TOKEN" =~ ^xoxb- ]]; do
-    echo "  Token must start with 'xoxb-'"
-    read -p "Bot Token (xoxb-...): " SLACK_BOT_TOKEN
-done
+SLACK_BOT_TOKEN=$(ask "  Bot Token (xoxb-...)" "" "^xoxb-")
+SLACK_APP_TOKEN=$(ask "  App Token (xapp-...)" "" "^xapp-")
 
-read -p "App Token (xapp-...): " SLACK_APP_TOKEN
-while [[ ! "$SLACK_APP_TOKEN" =~ ^xapp- ]]; do
-    echo "  Token must start with 'xapp-'"
-    read -p "App Token (xapp-...): " SLACK_APP_TOKEN
-done
-
-# --- Step 2: Bot Persona ---
+# ========================================
+# Step 2: Bot Persona
+# ========================================
 echo ""
 echo "--- Step 2/5: Bot Persona ---"
 echo ""
-echo "Give your bot a personality! This goes into CLAUDE.md"
-echo "so Claude knows how to behave."
-echo ""
 
-read -p "Bot name (e.g., DevBot, CodeHelper): " BOT_NAME
-BOT_NAME="${BOT_NAME:-Claude Bot}"
-
-read -p "Bot role (e.g., Backend developer assistant): " BOT_ROLE
-BOT_ROLE="${BOT_ROLE:-Development assistant}"
+BOT_NAME=$(ask "  Bot name" "Claude Bot") || BOT_NAME="Claude Bot"
+BOT_ROLE=$(ask "  Bot role" "Development assistant") || BOT_ROLE="Development assistant"
 
 echo ""
-echo "Speaking style examples:"
-echo "  1) Friendly and casual"
-echo "  2) Professional and concise"
-echo "  3) Technical and detailed"
-echo "  4) Custom"
-read -p "Choose style (1-4) [1]: " style_choice
-style_choice="${style_choice:-1}"
+echo "  Speaking style:"
+echo "    1) Friendly and casual"
+echo "    2) Professional and concise"
+echo "    3) Technical and detailed"
+echo "    4) Custom"
+style_choice=$(ask "  Choose (1-4)" "1") || style_choice="1"
 
 case $style_choice in
     1) SPEAKING_STYLE="Friendly and casual, uses exclamation marks, approachable" ;;
     2) SPEAKING_STYLE="Professional and concise, straight to the point" ;;
     3) SPEAKING_STYLE="Technical and detailed, includes code examples when relevant" ;;
-    4) read -p "Describe the speaking style: " SPEAKING_STYLE ;;
+    4) SPEAKING_STYLE=$(ask "  Describe the style" "Friendly") || SPEAKING_STYLE="Friendly" ;;
     *) SPEAKING_STYLE="Friendly and casual" ;;
 esac
 
-read -p "Response language (e.g., Korean, English, Japanese) [English]: " LANGUAGE
-LANGUAGE="${LANGUAGE:-English}"
+LANGUAGE=$(ask "  Response language" "English") || LANGUAGE="English"
 
 echo ""
-echo "Any extra persona details? (press Enter to skip)"
-echo "  e.g., 'Loves Python, always suggests tests, hates magic numbers'"
-read -p "> " EXTRA_PERSONA
+echo "  Extra persona details? (e.g., 'Loves Python, hates magic numbers')"
+EXTRA_PERSONA=$(ask "  Extra details (or skip)" "") || EXTRA_PERSONA=""
 
-# --- Step 3: Working Directory ---
+# ========================================
+# Step 3: Working Directory
+# ========================================
 echo ""
 echo "--- Step 3/5: Working Directory ---"
 echo ""
-echo "Claude will explore this directory to answer code questions."
-echo "This is the codebase Claude gets full access to."
+echo "  The codebase path Claude gets full access to explore."
 echo ""
 
-read -p "Codebase path [$(dirname "$SCRIPT_DIR")]: " WORK_DIR
-WORK_DIR="${WORK_DIR:-$(dirname "$SCRIPT_DIR")}"
-
-# Expand ~ to home directory
+DEFAULT_DIR="$(dirname "$SCRIPT_DIR")"
+WORK_DIR=$(ask "  Codebase path" "$DEFAULT_DIR") || WORK_DIR="$DEFAULT_DIR"
 WORK_DIR="${WORK_DIR/#\~/$HOME}"
 
-# Validate path
 if [ ! -d "$WORK_DIR" ]; then
     echo "  Warning: '$WORK_DIR' doesn't exist yet."
-    read -p "  Continue anyway? (y/N): " continue_anyway
-    if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
-        echo "  Please create the directory first."
+    if ! ask_yn "  Continue anyway?"; then
+        echo "  Please create the directory first, then re-run setup."
         exit 1
     fi
 fi
 
-# --- Step 4: Optional Features ---
+# ========================================
+# Step 4: Optional Features
+# ========================================
 echo ""
 echo "--- Step 4/5: Optional Features ---"
 echo ""
 
 # Review channel
-read -p "Enable review channel for detailed discussions? (y/N): " enable_review
 REVIEW_CHANNEL_ID=""
-if [[ "$enable_review" =~ ^[Yy]$ ]]; then
-    echo "  Create a channel in Slack for review discussions, then paste the channel ID."
-    echo "  (Right-click channel > View channel details > scroll to bottom for ID)"
-    read -p "  Review Channel ID (C...): " REVIEW_CHANNEL_ID
+if ask_yn "  Enable review channel for detailed discussions?"; then
+    echo "    (Right-click channel > View channel details > ID at bottom)"
+    REVIEW_CHANNEL_ID=$(ask "    Review Channel ID (C...)" "" "^C") || REVIEW_CHANNEL_ID=""
 fi
 
 # Always mention user
-read -p "Always mention a specific user in responses? (y/N): " enable_mention
 ALWAYS_MENTION_USER=""
-if [[ "$enable_mention" =~ ^[Yy]$ ]]; then
-    echo "  Paste the Slack user ID to always mention."
-    echo "  (Click on profile > three dots > Copy member ID)"
-    read -p "  User ID (U...): " ALWAYS_MENTION_USER
+if ask_yn "  Always mention a specific user in responses?"; then
+    echo "    (Click profile > ... > Copy member ID)"
+    ALWAYS_MENTION_USER=$(ask "    User ID (U...)" "" "^U") || ALWAYS_MENTION_USER=""
 fi
 
 # ClickHouse
-read -p "Enable ClickHouse integration? (y/N): " enable_ch
 CLICKHOUSE_ENABLED="false"
 CLICKHOUSE_HOST=""
 CLICKHOUSE_USER=""
 CLICKHOUSE_PASSWORD=""
 CLICKHOUSE_DEFAULT_SERVICE=""
-if [[ "$enable_ch" =~ ^[Yy]$ ]]; then
+if ask_yn "  Enable ClickHouse integration?"; then
     CLICKHOUSE_ENABLED="true"
-    read -p "  ClickHouse host: " CLICKHOUSE_HOST
-    read -p "  ClickHouse user [default]: " CLICKHOUSE_USER
-    CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
-    read -sp "  ClickHouse password: " CLICKHOUSE_PASSWORD
-    echo ""
-    read -p "  Default service name: " CLICKHOUSE_DEFAULT_SERVICE
+    CLICKHOUSE_HOST=$(ask "    ClickHouse host" "") || CLICKHOUSE_HOST=""
+    CLICKHOUSE_USER=$(ask "    ClickHouse user" "default") || CLICKHOUSE_USER="default"
+    CLICKHOUSE_PASSWORD=$(ask_secret "    ClickHouse password") || CLICKHOUSE_PASSWORD=""
+    CLICKHOUSE_DEFAULT_SERVICE=$(ask "    Default service name" "") || CLICKHOUSE_DEFAULT_SERVICE=""
 fi
 
-# --- Step 5: Team Members ---
+# ========================================
+# Step 5: Team Members
+# ========================================
 echo ""
 echo "--- Step 5/5: Team Members (optional) ---"
 echo ""
-echo "Add team members for calendar/mention features."
-echo "Enter in format: Name,email@example.com"
-echo "Press Enter on empty line to finish."
+echo "  Format: Name,email@example.com"
+echo "  Press Enter on empty line to finish."
 echo ""
 
 TEAM_TABLE=""
@@ -170,15 +215,44 @@ while true; do
     if [ -n "$name" ] && [ -n "$email" ]; then
         TEAM_TABLE="${TEAM_TABLE}| ${name} | ${email} |
 "
+        echo "    Added: $name <$email>"
     else
         echo "    Invalid format. Use: Name,email@example.com"
     fi
 done
 
-# === Generate .env ===
+# ========================================
+# Review before saving
+# ========================================
 echo ""
-echo "Generating .env..."
+echo "=========================================="
+echo "  Review Your Settings"
+echo "=========================================="
+echo ""
+echo "  Bot name:     $BOT_NAME"
+echo "  Role:         $BOT_ROLE"
+echo "  Style:        $SPEAKING_STYLE"
+echo "  Language:     $LANGUAGE"
+echo "  Codebase:     $WORK_DIR"
+echo "  Review ch:    ${REVIEW_CHANNEL_ID:-not set}"
+echo "  Mention user: ${ALWAYS_MENTION_USER:-not set}"
+echo "  ClickHouse:   $CLICKHOUSE_ENABLED"
+echo ""
 
+if ! ask_yn "  Save this configuration?"; then
+    echo ""
+    echo "  Setup cancelled. Nothing was saved."
+    echo "  Run ./setup.sh again to restart."
+    exit 0
+fi
+
+# ========================================
+# Generate files
+# ========================================
+echo ""
+echo "Saving configuration..."
+
+# --- .env ---
 cat > "$ENV_FILE" << ENVEOF
 # Claude Slack Bot Configuration
 # Generated by setup.sh on $(date '+%Y-%m-%d %H:%M')
@@ -205,9 +279,7 @@ ENVEOF
 
 echo "  Created: .env"
 
-# === Generate CLAUDE.md ===
-echo "Generating CLAUDE.md..."
-
+# --- CLAUDE.md ---
 cat > "$CLAUDE_MD" << CLAUDEEOF
 # ${BOT_NAME}
 
@@ -246,7 +318,6 @@ This bot sends messages via Slack - use Slack mrkdwn format:
 - Use bullet lists (\`-\`) instead of tables
 CLAUDEEOF
 
-# Add team table if provided
 if [ -n "$TEAM_TABLE" ]; then
     cat >> "$CLAUDE_MD" << TEAMEOF
 
@@ -260,7 +331,7 @@ fi
 
 echo "  Created: CLAUDE.md"
 
-# === Setup venv & dependencies ===
+# --- venv & deps ---
 echo ""
 echo "Setting up Python environment..."
 
@@ -275,18 +346,11 @@ echo "=========================================="
 echo "  Setup Complete!"
 echo "=========================================="
 echo ""
-echo "  Bot name:    ${BOT_NAME}"
-echo "  Language:    ${LANGUAGE}"
-echo "  Codebase:    ${WORK_DIR}"
-echo "  ClickHouse:  ${CLICKHOUSE_ENABLED}"
-echo "  Review ch:   ${REVIEW_CHANNEL_ID:-not set}"
-echo ""
-echo "  Files created:"
-echo "    - .env       (tokens & config)"
-echo "    - CLAUDE.md  (bot persona & rules)"
-echo ""
 echo "  To start the bot:"
 echo "    ./run-slack-bot.sh"
 echo ""
-echo "  To customize further, edit CLAUDE.md"
+echo "  To customize further:"
+echo "    - Edit CLAUDE.md for persona/behavior"
+echo "    - Edit .env for tokens/features"
+echo "    - Re-run ./setup.sh to start over"
 echo ""

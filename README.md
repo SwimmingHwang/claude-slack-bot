@@ -45,21 +45,27 @@ A Slack bot powered by [Claude Code CLI](https://docs.anthropic.com/en/docs/clau
    - `users:read.email` (optional, for user cache)
 5. Install the app to your workspace
 
-### 2. Run the Setup Wizard
+### 2. Setup with Claude Code (Recommended)
 
 ```bash
-git clone https://github.com/your-username/claude-slack-bot.git
+git clone https://github.com/SwimmingHwang/claude-slack-bot.git
 cd claude-slack-bot
-chmod +x setup.sh
-./setup.sh
+claude
 ```
 
-The wizard walks you through:
+Then just say:
+
+```
+> setup
+```
+
+Claude will interactively guide you through:
 - Slack token configuration
 - Bot persona (name, role, speaking style, language)
 - Working directory (the codebase Claude explores)
 - Optional features (review channel, ClickHouse, team members)
 - Auto-generates `.env` and `CLAUDE.md`
+- Installs dependencies
 
 ### 3. Run
 
@@ -67,12 +73,7 @@ The wizard walks you through:
 ./run-slack-bot.sh
 ```
 
-The script will automatically:
-- Create a Python virtual environment
-- Install dependencies
-- Start the bot
-
-> **Manual setup**: If you prefer, copy `.env.example` to `.env` and edit manually instead of using the wizard.
+> **Alternative**: Run `./setup.sh` for a bash-based setup wizard, or copy `.env.example` to `.env` and edit manually.
 
 ## Configuration
 

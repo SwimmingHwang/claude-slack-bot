@@ -576,6 +576,12 @@ def handle_mention(event, say, client):
             )
         return
 
+    # Add eyes reaction to acknowledge receipt
+    try:
+        client.reactions_add(channel=channel, timestamp=event.get("ts"), name="eyes")
+    except Exception:
+        pass
+
     # === NORMAL MODE ===
     clickhouse_context = ""
     if config.CLICKHOUSE_ENABLED:
@@ -587,10 +593,18 @@ def handle_mention(event, say, client):
             if needs_analysis:
                 clickhouse_context = f"\n--- ClickHouse Results ---\n{ch_result}\n--- End ---\n"
             else:
+                try:
+                    client.reactions_remove(channel=channel, timestamp=event.get("ts"), name="eyes")
+                except Exception:
+                    pass
                 say(text=f"<@{user}>\n{ch_result}", channel=channel, thread_ts=thread_ts)
                 return
 
-    # Add thinking reaction
+    # Switch to thinking reaction
+    try:
+        client.reactions_remove(channel=channel, timestamp=event.get("ts"), name="eyes")
+    except Exception:
+        pass
     try:
         client.reactions_add(channel=channel, timestamp=event.get("ts"), name="thinking_face")
     except Exception:
@@ -686,6 +700,17 @@ def handle_message(event, say, client):
 
     logger.info(f"DM from <@{user}>: {text[:100]}...")
 
+    # Acknowledge receipt
+    try:
+        client.reactions_add(channel=channel, timestamp=event.get("ts"), name="eyes")
+    except Exception:
+        pass
+
+    # Switch to thinking
+    try:
+        client.reactions_remove(channel=channel, timestamp=event.get("ts"), name="eyes")
+    except Exception:
+        pass
     try:
         client.reactions_add(channel=channel, timestamp=event.get("ts"), name="thinking_face")
     except Exception:

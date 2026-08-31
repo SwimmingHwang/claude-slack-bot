@@ -22,6 +22,7 @@ import re
 import logging
 import time
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from typing import Optional
 from slack_bolt import App
@@ -46,6 +47,58 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def run_agent(prompt: str, *, claude_flags: list[str], codex_sandbox: str = "read-only",
+              codex_bypass: bool = False, add_dirs: list = (), cwd: str = None,
+              timeout: int = 300) -> subprocess.CompletedProcess:
+    """Run the configured agent CLI (claude or codex) headlessly.
+
+    Returns a CompletedProcess whose stdout is the agent's final message.
+    - claude_flags: extra flags for the claude CLI.
+    - codex_sandbox: codex sandbox mode when not bypassing (read-only/workspace-write).
+    - codex_bypass: codex equivalent of --dangerously-skip-permissions.
+    """
+    cwd = cwd or str(config.PROJECT_ROOT)
+    if config.BOT_PROVIDER == "codex":
+        out_file = tempfile.NamedTemporaryFile(mode="r", suffix=".txt", delete=False, encoding="utf-8")
+        out_file.close()
+        cmd = [config.CODEX_CLI, "exec", "--skip-git-repo-check", "--ephemeral",
+               "--color", "never", "-o", out_file.name]
+        if codex_bypass:
+            cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            cmd.extend(["-s", codex_sandbox])
+        if config.CODEX_MODEL:
+            cmd.extend(["-m", config.CODEX_MODEL])
+        for d in add_dirs:
+            cmd.extend(["--add-dir", str(d)])
+        cmd.append(prompt)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+            if result.returncode == 0:
+                try:
+                    with open(out_file.name, encoding="utf-8") as f:
+                        result.stdout = f.read().strip()
+                except OSError:
+                    pass  # fall back to raw stdout
+            return result
+        finally:
+            try:
+                os.unlink(out_file.name)
+            except OSError:
+                pass
+    cmd = [config.CLAUDE_CLI, "-p", prompt, *claude_flags]
+    for d in add_dirs:
+        cmd.extend(["--add-dir", str(d)])
+    return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+
+
+AGENT_CLI_NOT_FOUND = (
+    "Codex CLI not found. Make sure 'codex' is installed and in PATH."
+    if config.BOT_PROVIDER == "codex"
+    else "Claude CLI not found. Make sure 'claude' is installed and in PATH."
+)
 
 file_handler = logging.FileHandler('slack-bot-debug.log')
 file_handler.setLevel(logging.DEBUG)
@@ -205,18 +258,11 @@ Please provide a helpful answer based on the codebase.
 """
 
     try:
-        cmd = [
-            "claude", "-p", prompt,
-            "--dangerously-skip-permissions",
-        ]
-        if config.CLAUDE_ADD_DIR:
-            cmd.extend(["--add-dir", config.CLAUDE_ADD_DIR])
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=str(config.PROJECT_ROOT),
+        result = run_agent(
+            prompt,
+            claude_flags=["--dangerously-skip-permissions"],
+            codex_bypass=True,
+            add_dirs=[config.CLAUDE_ADD_DIR] if config.CLAUDE_ADD_DIR else [],
             timeout=config.CLAUDE_TIMEOUT,
         )
 
@@ -232,7 +278,7 @@ Please provide a helpful answer based on the codebase.
     except subprocess.TimeoutExpired:
         return "Request timed out. The question might be too complex."
     except FileNotFoundError:
-        return "Claude CLI not found. Make sure 'claude' is installed and in PATH."
+        return AGENT_CLI_NOT_FOUND
     except Exception as e:
         logger.exception("Error calling Claude CLI")
         return f"Error: {str(e)}"
@@ -258,10 +304,9 @@ Use Slack mrkdwn format (*bold*, not **bold**).
 """
 
     try:
-        result = subprocess.run(
-            ["claude", "-p", prompt, "--no-session-persistence"],
-            capture_output=True, text=True,
-            cwd=str(config.PROJECT_ROOT), timeout=120,
+        result = run_agent(
+            prompt, claude_flags=["--no-session-persistence"],
+            codex_sandbox="read-only", timeout=120,
         )
         if result.returncode == 0:
             response = result.stdout.strip()
@@ -298,10 +343,9 @@ Conversation:
 Summary (same language as conversation):"""
 
     try:
-        result = subprocess.run(
-            ["claude", "-p", prompt, "--no-session-persistence"],
-            capture_output=True, text=True,
-            cwd=str(config.PROJECT_ROOT), timeout=60,
+        result = run_agent(
+            prompt, claude_flags=["--no-session-persistence"],
+            codex_sandbox="read-only", timeout=60,
         )
         if result.returncode == 0:
             return result.stdout.strip()

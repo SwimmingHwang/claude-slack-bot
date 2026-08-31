@@ -20,6 +20,15 @@ REVIEW_CHANNEL_ID = os.environ.get("SLACK_REVIEW_CHANNEL_ID", "")
 # Optional: Always mention this user in responses (Slack user ID, e.g., "U05JK5UUR7U")
 ALWAYS_MENTION_USER = os.environ.get("ALWAYS_MENTION_USER", "")
 
+# --- Agent provider ---
+# "claude" (default) or "codex". Codex reads its persona from AGENTS.md
+# (symlinked to CLAUDE.md) and model/MCP config from ~/.codex/config.toml.
+BOT_PROVIDER = os.environ.get("BOT_PROVIDER", "claude")
+CLAUDE_CLI = os.environ.get("CLAUDE_CLI", "claude")
+CODEX_CLI = os.environ.get("CODEX_CLI", "codex")
+# Empty -> use the default model from ~/.codex/config.toml
+CODEX_MODEL = os.environ.get("CODEX_MODEL", "")
+
 # --- Claude CLI ---
 # Additional directory for Claude to explore (default: parent directory)
 CLAUDE_ADD_DIR = os.environ.get("CLAUDE_ADD_DIR", str(PARENT_DIR))

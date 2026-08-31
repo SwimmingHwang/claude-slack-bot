@@ -87,7 +87,18 @@ All settings are in `.env` (see `.env.example` for all options):
 | `SLACK_REVIEW_CHANNEL_ID` | No | Channel for `review:` and `task:` discussions |
 | `CLAUDE_ADD_DIR` | No | Additional directory for Claude to explore |
 | `CLAUDE_TIMEOUT` | No | CLI timeout in seconds (default: 1800) |
+| `BOT_PROVIDER` | No | Agent CLI: `claude` (default) or `codex` |
+| `CODEX_MODEL` | No | Codex model override (default: `~/.codex/config.toml`) |
 | `CLICKHOUSE_ENABLED` | No | Enable ClickHouse integration (`true`/`false`) |
+
+### Using Codex instead of Claude Code
+
+Set `BOT_PROVIDER=codex` in `.env`. All headless calls go through `run_agent()`,
+which builds a `codex exec` command instead of `claude -p`. Codex reads the bot
+persona from `AGENTS.md` (a symlink to `CLAUDE.md`) and model/MCP settings from
+`~/.codex/config.toml`. Read-only calls (summaries, clarifications) run in the
+`read-only` sandbox; the main Q&A call bypasses the sandbox like
+`--dangerously-skip-permissions` does for Claude.
 
 ## Usage
 

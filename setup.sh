@@ -330,6 +330,9 @@ TEAMEOF
 fi
 
 echo "  Created: CLAUDE.md"
+# Codex reads AGENTS.md; keep it pointing at CLAUDE.md so both providers share the persona
+ln -sf CLAUDE.md "$SCRIPT_DIR/AGENTS.md"
+echo "  Linked:  AGENTS.md -> CLAUDE.md"
 
 # --- venv & deps ---
 echo ""
